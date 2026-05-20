@@ -122,15 +122,17 @@ yapilan = df[df["İşlem Türü"] == "Yapılan Ödeme"]
 gelen = df[df["İşlem Türü"] == "Gelen Bedel"]
 fatura = df[df["İşlem Türü"] == "Kesilen Fatura"]
 
-# Tarih Seçimine Göre Dinamik Filtreler
+# Tarih Seçimine Göre Dinamik Filtreler (Gelen Ödemeler ve Kesilen Faturalar)
 secili_gelen = gelen[(gelen["Tarih_dt"] >= secili_baslangic) & (gelen["Tarih_dt"] <= secili_bitis)]
+secili_fatura = fatura[(fatura["Tarih_dt"] >= secili_baslangic) & (fatura["Tarih_dt"] <= secili_bitis)]
 secili_yapilan = yapilan[(yapilan["Tarih_dt"] >= secili_baslangic) & (yapilan["Tarih_dt"] <= secili_bitis)]
 
 # Sabit Yıl Başı ve Cari Ay Hesaplamaları
 yil_basi_gelen = gelen[(gelen["Tarih_dt"] >= yil_basi) & (gelen["Tarih_dt"] <= bugun)]
+yil_basi_fatura = fatura[(fatura["Tarih_dt"] >= yil_basi) & (fatura["Tarih_dt"] <= bugun)]
+
 ay_yapilan = yapilan[yapilan["Tarih_dt"] >= ay_basi]
 ay_gelen = gelen[gelen["Tarih_dt"] >= ay_basi]
-toplam_fatura_tutari = fatura["Tutar"].sum()
 
 # --- TASARIM VE CSS ---
 st.markdown(f"""
@@ -163,16 +165,16 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- ÜST METRİK KARTLARI (YENİLENDİ) ---
+# --- ÜST METRİK KARTLARI (YENİLENDİ: SEÇİLİ DÖNEM FATURA KARTLARI EKLENDİ) ---
 col_a, col_b, col_c, col_d = st.columns(4)
 with col_a:
     st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Gelen (Tahsilat)</div><div class="mini-value">{secili_gelen["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Sol Tarih Filtresine Göre</div></div>', unsafe_allow_html=True)
 with col_b:
     st.markdown(f'<div class="mini-card"><div class="mini-title">Yıl Başından Bugüne Gelen</div><div class="mini-value">{yil_basi_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">📈 1 Ocak\'tan İtibaren Sabit</div></div>', unsafe_allow_html=True)
 with col_c:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Ödemeler</div><div class="mini-value">{secili_yapilan["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">● Filtrelenmiş Giderler</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Kesilen Fatura</div><div class="mini-value">{secili_fatura["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Sol Tarih Filtresine Göre</div></div>', unsafe_allow_html=True)
 with col_d:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Toplam Kesilen Fatura</div><div class="mini-value">{toplam_fatura_tutari:,.0f} ₺</div><div class="green-tag">🧾 Toplam Faturalandırılan</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıl Başından Bugüne Fatura</div><div class="mini-value">{yil_basi_fatura["Tutar"].sum():,.0f} ₺</div><div class="green-tag">🧾 Toplam Faturalandırılan</div></div>', unsafe_allow_html=True)
 
 # --- DİNAMİK MODERN GRAFİK PANELİ ---
 st.markdown("<br>", unsafe_allow_html=True)
@@ -316,7 +318,7 @@ with tab3:
 with tab4:
     st.dataframe(secili_gelen.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400)
 with tab5:
-    st.dataframe(fatura.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400)
+    st.dataframe(secili_fatura.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400)
 
 def tutar_temizle(deger):
     if pd.isna(deger): return 0
