@@ -52,7 +52,6 @@ df = pd.read_csv(DOSYA)
 df = df[df["Tarih"].astype(str).str.contains("2026", na=False)]
 df = df.drop_duplicates(subset=["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar"])
 
-# Kolon kontrolü ve eksik kolonların oluşturulması
 for kolon in ["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar", "Ödeme Kırılımı", "Fatura Dönemi"]:
     if kolon not in df.columns:
         df[kolon] = ""
@@ -61,7 +60,6 @@ df["İşlem Türü"] = df["İşlem Türü"].replace("", "Yapılan Ödeme").filln
 df["Tutar"] = pd.to_numeric(df["Tutar"], errors="coerce").fillna(0)
 df["Tarih_dt"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
 
-# Tarihten otomatik Fatura Dönemi türetme
 aylar_map = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran", 7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
 df.loc[df["Fatura Dönemi"] == "", "Fatura Dönemi"] = df["Tarih_dt"].dt.month.map(aylar_map)
 df["Fatura Dönemi"] = df["Fatura Dönemi"].fillna("Mayıs")
@@ -79,7 +77,6 @@ st.sidebar.header("➕ Yeni Kayıt")
 tarih = st.sidebar.date_input("Tarih")
 islem_turu = st.sidebar.selectbox("İşlem Türü", ["Yapılan Ödeme", "Kesilen Fatura", "Gelen Bedel"])
 
-# Dinamik Alan Yönetimi
 secili_kirilim = ""
 odeme = ""
 fatura_donemi = ""
@@ -122,12 +119,12 @@ yapilan = df[df["İşlem Türü"] == "Yapılan Ödeme"]
 gelen = df[df["İşlem Türü"] == "Gelen Bedel"]
 fatura = df[df["İşlem Türü"] == "Kesilen Fatura"]
 
-# Tarih Seçimine Göre Dinamik Filtreler (Gelen Ödemeler ve Kesilen Faturalar)
+# Tarih Seçimine Göre Tam Dinamik Filtreleme (Kesişmeler engellendi)
 secili_gelen = gelen[(gelen["Tarih_dt"] >= secili_baslangic) & (gelen["Tarih_dt"] <= secili_bitis)]
 secili_fatura = fatura[(fatura["Tarih_dt"] >= secili_baslangic) & (fatura["Tarih_dt"] <= secili_bitis)]
 secili_yapilan = yapilan[(yapilan["Tarih_dt"] >= secili_baslangic) & (yapilan["Tarih_dt"] <= secili_bitis)]
 
-# Sabit Yıl Başı ve Cari Ay Hesaplamaları
+# Sabit Yıllık Kümülatif Hesaplamalar
 yil_basi_gelen = gelen[(gelen["Tarih_dt"] >= yil_basi) & (gelen["Tarih_dt"] <= bugun)]
 yil_basi_fatura = fatura[(fatura["Tarih_dt"] >= yil_basi) & (fatura["Tarih_dt"] <= bugun)]
 
@@ -165,22 +162,21 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- ÜST METRİK KARTLARI (YENİLENDİ: SEÇİLİ DÖNEM FATURA KARTLARI EKLENDİ) ---
+# --- ÜST METRİK KARTLARI ---
 col_a, col_b, col_c, col_d = st.columns(4)
 with col_a:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Gelen (Tahsilat)</div><div class="mini-value">{secili_gelen["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Sol Tarih Filtresine Göre</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Ay Tahsil Edilecek Fatura</div><div class="mini-value">{secili_fatura["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Alacak Hedefi</div></div>', unsafe_allow_html=True)
 with col_b:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıl Başından Bugüne Gelen</div><div class="mini-value">{yil_basi_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">📈 1 Ocak\'tan İtibaren Sabit</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Gelen Bedel</div><div class="mini-value">{secili_gelen["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Yapılan Tahsilat</div></div>', unsafe_allow_html=True)
 with col_c:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Kesilen Fatura</div><div class="mini-value">{secili_fatura["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Sol Tarih Filtresine Göre</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıllık Toplam Kesilen Fatura</div><div class="mini-value">{yil_basi_fatura["Tutar"].sum():,.0f} ₺</div><div class="green-tag">🧾 1 Ocak\'tan Beri Ciro</div></div>', unsafe_allow_html=True)
 with col_d:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıl Başından Bugüne Fatura</div><div class="mini-value">{yil_basi_fatura["Tutar"].sum():,.0f} ₺</div><div class="green-tag">🧾 Toplam Faturalandırılan</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıl Başından Bugüne Gelen</div><div class="mini-value">{yil_basi_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">📈 Birikimli Toplam Kasa Girişi</div></div>', unsafe_allow_html=True)
 
 # --- DİNAMİK MODERN GRAFİK PANELİ ---
 st.markdown("<br>", unsafe_allow_html=True)
 g_col1, g_col2, g_col3 = st.columns([1.3, 1.3, 1.4])
 
-# 1. Gelen Ödemeler Analizi (Dinamik Seçime Odaklı)
 with g_col1:
     st.markdown('<div class="chart-card"><div class="chart-header">Gelen Ödemeler Aylık Trend</div>', unsafe_allow_html=True)
     fig1 = go.Figure()
@@ -198,7 +194,6 @@ with g_col1:
     st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 2. Ödemeler Dağılımı
 with g_col2:
     st.markdown('<div class="chart-card"><div class="chart-header">Gider Dağılımı (Seçili Dönem)</div>', unsafe_allow_html=True)
     target_gider = secili_yapilan if len(secili_yapilan) > 0 else ay_yapilan
@@ -221,7 +216,6 @@ with g_col2:
     st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 3. KESİLEN FATURA VE TAHSİLAT (KIYAS GRAFİĞİ)
 with g_col3:
     st.markdown('<div class="chart-card"><div class="chart-header">Fatura / Tahsilat Dönemsel Kıyas Analizi</div>', unsafe_allow_html=True)
     
@@ -249,7 +243,6 @@ with g_col3:
     st.plotly_chart(fig3, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-
 # --- FATURA / TAHSİLAT KIYAS TABLOSU ---
 st.divider()
 st.subheader("📊 Fatura ve Tahsilat Performans Raporu (Aylık)")
@@ -276,7 +269,6 @@ if kiyas_data:
 else:
     st.info("Kıyaslama tablosu için henüz girilmiş Fatura veya Gelen Bedel kaydı bulunmuyor.")
 
-
 # --- DETAYLI VERİ SEKMELERİ VE METRİKLER ---
 st.divider()
 st.subheader("💰 Özel Gelen Bedel Takibi")
@@ -301,7 +293,7 @@ st.divider()
 
 tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📊 Tüm Kayıtlar", "💸 Yapılan Ödemeler", "💰 Gelen Bedeller", 
-    "📆 Seçili Dönem Gelen", "🧾 Kesilen Faturalar", "📤 Dosya Yükle"
+    "📆 Seçili Dönem Gelen", "🧾 Seçili Ay Kesilen Faturalar", "📤 Dosya Yükle"
 ])
 
 with tab1:
