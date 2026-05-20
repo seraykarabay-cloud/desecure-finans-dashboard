@@ -13,7 +13,7 @@ st.set_page_config(page_title="Finans Dashboard", page_icon="💰", layout="wide
 KULLANICILAR = {
     "merve bozkurt": "1234",
     "firdevs ulutas": "4321",
-    "seray karabay": "3210"  # Yeni kullanıcı eklendi
+    "seray karabay": "3210"
 }
 
 if "giris_yapildi" not in st.session_state:
@@ -26,7 +26,6 @@ if not st.session_state.giris_yapildi:
     sifre = st.text_input("Şifre", type="password")
 
     if st.button("Giriş Yap"):
-        # Giriş yaparken küçük/büyük harf duyarlılığını azaltmak için .lower() kullandık
         kb_kullanici = kullanici_adi.lower().strip()
         if kb_kullanici in KULLANICILAR and KULLANICILAR[kb_kullanici] == sifre:
             st.session_state.giris_yapildi = True
@@ -62,7 +61,7 @@ df["İşlem Türü"] = df["İşlem Türü"].replace("", "Yapılan Ödeme").filln
 df["Tutar"] = pd.to_numeric(df["Tutar"], errors="coerce").fillna(0)
 df["Tarih_dt"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
 
-# Tarihten otomatik Fatura Dönemi türetme (Eğer boş girildiyse kayma olmasın diye)
+# Tarihten otomatik Fatura Dönemi türetme
 aylar_map = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran", 7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
 df.loc[df["Fatura Dönemi"] == "", "Fatura Dönemi"] = df["Tarih_dt"].dt.month.map(aylar_map)
 df["Fatura Dönemi"] = df["Fatura Dönemi"].fillna("Mayıs")
@@ -91,13 +90,13 @@ if islem_turu == "Yapılan Ödeme":
     kirilim_secenekleri = ["vergiler", "kıdem ihbar", "icra", "maaş", "nakit çekilen", "avans", "iş avansı", "hgs", "banka masrafı", "kredi kartı ödemesi", "Diğer"]
     secili_kirilim = st.sidebar.selectbox("Ödeme Kırılımı", kirilim_secenekleri)
     odeme = st.sidebar.selectbox("Ödeme Tipi", ["Nakit", "Havale", "Kart"])
-    fatura_donemi = aylar_map[tarih.month] # Ödemenin yapıldığı ay
+    fatura_donemi = aylar_map[tarih.month]
 elif islem_turu == "Kesilen Fatura":
     fatura_donemi = st.sidebar.selectbox("Fatura Dönemi (Ait Olduğu Ay)", aylar_sirasi, index=datetime.now().month - 1)
     odeme = "Fatura (Bağımsız)"
 else:
     odeme = st.sidebar.selectbox("Ödeme Tipi", ["Nakit", "Havale", "Kart"])
-    fatura_donemi = aylar_map[tarih.month] # Tahsilatın geldiği ay
+    fatura_donemi = aylar_map[tarih.month]
 
 aciklama = st.sidebar.text_input("Açıklama")
 tutar = st.sidebar.number_input("Tutar", min_value=0.0, step=100.0)
@@ -118,47 +117,40 @@ if st.sidebar.button("Kaydet"):
     st.success("Kayıt eklendi.")
     st.rerun()
 
+# --- VERİ FİLTRELEME & HESAPLAMALAR ---
 yapilan = df[df["İşlem Türü"] == "Yapılan Ödeme"]
 gelen = df[df["İşlem Türü"] == "Gelen Bedel"]
 fatura = df[df["İşlem Türü"] == "Kesilen Fatura"]
 
+# Tarih Seçimine Göre Dinamik Filtreler
+secili_gelen = gelen[(gelen["Tarih_dt"] >= secili_baslangic) & (gelen["Tarih_dt"] <= secili_bitis)]
+secili_yapilan = yapilan[(yapilan["Tarih_dt"] >= secili_baslangic) & (yapilan["Tarih_dt"] <= secili_bitis)]
+
+# Sabit Yıl Başı ve Cari Ay Hesaplamaları
+yil_basi_gelen = gelen[(gelen["Tarih_dt"] >= yil_basi) & (gelen["Tarih_dt"] <= bugun)]
 ay_yapilan = yapilan[yapilan["Tarih_dt"] >= ay_basi]
 ay_gelen = gelen[gelen["Tarih_dt"] >= ay_basi]
 toplam_fatura_tutari = fatura["Tutar"].sum()
-
-secili_gelen = gelen[(gelen["Tarih_dt"] >= secili_baslangic) & (gelen["Tarih_dt"] <= secili_bitis)]
 
 # --- TASARIM VE CSS ---
 st.markdown(f"""
 <style>
 .hero {{
     background: linear-gradient(90deg, #374151 0%, #1f2937 50%, #111827 100%);
-    border-radius: 12px;
-    padding: 20px 40px;
-    border: 1px solid rgba(255,255,255,0.1);
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-    margin-bottom: 25px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    position: relative;
+    border-radius: 12px; padding: 20px 40px; border: 1px solid rgba(255,255,255,0.1);
+    box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin-bottom: 25px; display: flex; align-items: center; justify-content: center; position: relative;
 }}
-.logo-box {{
-    background: white; border-radius: 10px; padding: 10px 20px; position: absolute; left: 40px; box-shadow: 0 4px 15px rgba(0,0,0,0.2);
-}}
+.logo-box {{ background: white; border-radius: 10px; padding: 10px 20px; position: absolute; left: 40px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }}
 .logo-box img {{ height: 38px; display: block; }}
 .hero-text-container {{ text-align: center; }}
 .hero-title {{ font-size: 50px; color: white; margin: 0; font-weight: 300; letter-spacing: 1px; }}
 .hero-subtitle {{ font-size: 18px; color: #cbd5e1; margin-top: 8px; font-weight: 300; }}
-.mini-card {{
-    background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); margin-bottom: 20px;
-}}
+.mini-card {{ background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); margin-bottom: 20px; }}
 .mini-title {{ color: #9ca3af; font-size: 13px; font-weight: 500; margin-bottom: 8px; }}
-.mini-value {{ color: white; font-size: 26px; font-weight: 600; margin-bottom: 6px; }}
+.mini-value {{ color: white; font-size: 24px; font-weight: 600; margin-bottom: 6px; }}
 .green-tag {{ color: #34d399; font-size: 12px; display: flex; align-items: center; gap: 4px; }}
-.chart-card {{
-    background: #111827; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-}}
+.blue-tag {{ color: #60a5fa; font-size: 12px; display: flex; align-items: center; gap: 4px; }}
+.chart-card {{ background: #111827; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }}
 .chart-header {{ color: white; font-size: 14px; font-weight: 500; margin-bottom: 10px; }}
 </style>
 
@@ -171,14 +163,14 @@ st.markdown(f"""
 </div>
 """, unsafe_allow_html=True)
 
-# --- ÜST METRİK KARTLARI ---
+# --- ÜST METRİK KARTLARI (YENİLENDİ) ---
 col_a, col_b, col_c, col_d = st.columns(4)
 with col_a:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Gelen Ödemeler (Ay)</div><div class="mini-value">{ay_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">↗ Ay toplamı</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Gelen (Tahsilat)</div><div class="mini-value">{secili_gelen["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Sol Tarih Filtresine Göre</div></div>', unsafe_allow_html=True)
 with col_b:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Ödemeler (Ay)</div><div class="mini-value">{ay_yapilan["Tutar"].sum():,.0f} ₺</div><div class="green-tag">● Cari Ay Ödemeleri</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıl Başından Bugüne Gelen</div><div class="mini-value">{yil_basi_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">📈 1 Ocak\'tan İtibaren Sabit</div></div>', unsafe_allow_html=True)
 with col_c:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Nakit Akışı (Net)</div><div class="mini-value">{(ay_gelen["Tutar"].sum() - ay_yapilan["Tutar"].sum()):,.0f} ₺</div><div class="green-tag">📈 Cari Ay Dengesi</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Ödemeler</div><div class="mini-value">{secili_yapilan["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">● Filtrelenmiş Giderler</div></div>', unsafe_allow_html=True)
 with col_d:
     st.markdown(f'<div class="mini-card"><div class="mini-title">Toplam Kesilen Fatura</div><div class="mini-value">{toplam_fatura_tutari:,.0f} ₺</div><div class="green-tag">🧾 Toplam Faturalandırılan</div></div>', unsafe_allow_html=True)
 
@@ -186,13 +178,13 @@ with col_d:
 st.markdown("<br>", unsafe_allow_html=True)
 g_col1, g_col2, g_col3 = st.columns([1.3, 1.3, 1.4])
 
-# 1. Gelen Ödemeler (Tahsilat) Analizi
+# 1. Gelen Ödemeler Analizi (Dinamik Seçime Odaklı)
 with g_col1:
-    st.markdown('<div class="chart-card"><div class="chart-header">Gelen Ödemeler Dağılımı</div>', unsafe_allow_html=True)
+    st.markdown('<div class="chart-card"><div class="chart-header">Gelen Ödemeler Aylık Trend</div>', unsafe_allow_html=True)
     fig1 = go.Figure()
     fig1.add_trace(go.Bar(
         x=['Oca', 'Şub', 'Mar', 'Nis', 'May'], 
-        y=[12000, 19000, 15000, 28000, ay_gelen['Tutar'].sum() if len(ay_gelen)>0 else 22000],
+        y=[12000, 19000, 15000, 28000, ay_gelen['Tutar'].sum() if len(ay_gelen)>0 else 0],
         marker_color='#34d399', opacity=0.85, marker_line_width=0
     ))
     fig1.update_layout(
@@ -204,12 +196,13 @@ with g_col1:
     st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': False})
     st.markdown('</div>', unsafe_allow_html=True)
 
-# 2. Ödemeler Dağılımı (Dinamik Donut Grafiği)
+# 2. Ödemeler Dağılımı
 with g_col2:
-    st.markdown('<div class="chart-card"><div class="chart-header">Gider Dağılımı</div>', unsafe_allow_html=True)
-    if len(ay_yapilan) > 0 and "Ödeme Kırılımı" in ay_yapilan.columns:
-        ay_yapilan["Ödeme Kırılımı"] = ay_yapilan["Ödeme Kırılımı"].fillna("Diğer").replace("", "Diğer")
-        grup_df = ay_yapilan.groupby("Ödeme Kırılımı")["Tutar"].sum().reset_index()
+    st.markdown('<div class="chart-card"><div class="chart-header">Gider Dağılımı (Seçili Dönem)</div>', unsafe_allow_html=True)
+    target_gider = secili_yapilan if len(secili_yapilan) > 0 else ay_yapilan
+    if len(target_gider) > 0 and "Ödeme Kırılımı" in target_gider.columns:
+        target_gider["Ödeme Kırılımı"] = target_gider["Ödeme Kırılımı"].fillna("Diğer").replace("", "Diğer")
+        grup_df = target_gider.groupby("Ödeme Kırılımı")["Tutar"].sum().reset_index()
         labels = grup_df["Ödeme Kırılımı"].tolist()
         values = grup_df["Tutar"].tolist()
     else:
