@@ -119,12 +119,12 @@ yapilan = df[df["İşlem Türü"] == "Yapılan Ödeme"]
 gelen = df[df["İşlem Türü"] == "Gelen Bedel"]
 fatura = df[df["İşlem Türü"] == "Kesilen Fatura"]
 
-# Tarih Seçimine Göre Tam Dinamik Filtreleme (Kesişmeler engellendi)
+# Tarih Seçimine Göre Aylık/Dönemsel Dinamik Filtreleme
 secili_gelen = gelen[(gelen["Tarih_dt"] >= secili_baslangic) & (gelen["Tarih_dt"] <= secili_bitis)]
 secili_fatura = fatura[(fatura["Tarih_dt"] >= secili_baslangic) & (fatura["Tarih_dt"] <= secili_bitis)]
 secili_yapilan = yapilan[(yapilan["Tarih_dt"] >= secili_baslangic) & (yapilan["Tarih_dt"] <= secili_bitis)]
 
-# Sabit Yıllık Kümülatif Hesaplamalar
+# Yıllık Kümülatif Hesaplamalar (Takvim seçiminden tamamen bağımsız, 1 Ocak'tan bugüne sabit)
 yil_basi_gelen = gelen[(gelen["Tarih_dt"] >= yil_basi) & (gelen["Tarih_dt"] <= bugun)]
 yil_basi_fatura = fatura[(fatura["Tarih_dt"] >= yil_basi) & (fatura["Tarih_dt"] <= bugun)]
 
@@ -165,13 +165,13 @@ st.markdown(f"""
 # --- ÜST METRİK KARTLARI ---
 col_a, col_b, col_c, col_d = st.columns(4)
 with col_a:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Ay Tahsil Edilecek Fatura</div><div class="mini-value">{secili_fatura["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Alacak Hedefi</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Aylık Kesilen Fatura</div><div class="mini-value">{secili_fatura["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Alacak Hedefi</div></div>', unsafe_allow_html=True)
 with col_b:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Seçili Dönem Gelen Bedel</div><div class="mini-value">{secili_gelen["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Yapılan Tahsilat</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Aylık Gelen Bedel</div><div class="mini-value">{secili_gelen["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Yapılan Tahsilat</div></div>', unsafe_allow_html=True)
 with col_c:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıllık Toplam Kesilen Fatura</div><div class="mini-value">{yil_basi_fatura["Tutar"].sum():,.0f} ₺</div><div class="green-tag">🧾 1 Ocak\'tan Beri Ciro</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıllık Toplam Kesilen Fatura</div><div class="mini-value">{yil_basi_fatura["Tutar"].sum():,.0f} ₺</div><div class="green-tag">🧾 1 Ocak\'tan Beri Toplam Ciro</div></div>', unsafe_allow_html=True)
 with col_d:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıl Başından Bugüne Gelen</div><div class="mini-value">{yil_basi_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">📈 Birikimli Toplam Kasa Girişi</div></div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıllık Toplam Gelen Bedel</div><div class="mini-value">{yil_basi_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">📈 Birikimli Toplam Kasa Girişi</div></div>', unsafe_allow_html=True)
 
 # --- DİNAMİK MODERN GRAFİK PANELİ ---
 st.markdown("<br>", unsafe_allow_html=True)
