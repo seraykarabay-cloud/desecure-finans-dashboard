@@ -1,373 +1,543 @@
-import streamlit as st
-import pandas as pd
-from datetime import datetime
-import os
+
 import base64
+import hashlib
+import hmac
+import os
+from datetime import datetime
+from pathlib import Path
+
+import pandas as pd
+import plotly.graph_objects as go
+import streamlit as st
 import plotly.graph_objects as go
 
-DOSYA = "veriler.csv"
+APP_TITLE = "Desecure Finans Dashboard"
+DATA_FILE = Path("veriler.csv")
+LOGO_FILE = Path("logo.png")
+COLUMNS = ["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar", "Ödeme Kırılımı", "Fatura Dönemi"]
 
-st.set_page_config(page_title="Finans Dashboard", page_icon="💰", layout="wide")
+MONTHS = {
+    1: "Ocak", 2: "Şubat", 3: "Mart", 4: "Nisan", 5: "Mayıs", 6: "Haziran",
+    7: "Temmuz", 8: "Ağustos", 9: "Eylül", 10: "Ekim", 11: "Kasım", 12: "Aralık"
+}
+MONTH_ORDER = list(MONTHS.values())
 
-# --- KULLANICI TANIMLAMALARI ---
-KULLANICILAR = {
-    "merve bozkurt": "1234",
-    "firdevs ulutas": "4321",
-    "seray karabay": "3210"
+PAYMENT_BREAKDOWN_RULES = {
+    "Maaş": ["maaş", "maas"],
+    "Vergi": ["vergi", "kdv", "muhtasar", "damga vergisi", "damga"],
+    "İş Avansı": ["iş avansı", "is avansi"],
+    "Avans": ["avans"],
+    "İcra": ["icra"],
+    "BES": ["bes"],
+    "Abonelik": ["telekom", "turkcell", "ttnet", "ttmobil", "abonelik", "esernet", "deski", "maski", "doğalgaz", "dogalgaz"],
+    "Kira": ["kira"],
+    "Aidat": ["aidat"],
+    "HGS": ["hgs"],
+    "Nakit Çekilen": ["nakit çekilen", "nakit cekilen", "nakit cekim"],
+    "Cenk Çavuşoğlu": ["cenk çavuşoğlu", "cenk cavusoglu"],
+    "Banka Masraf / Komisyon": ["eft", "havale", "masraf", "mektup komisyonu", "komisyon", "mektup"],
 }
 
-if "giris_yapildi" not in st.session_state:
-    st.session_state.giris_yapildi = False
+DEFAULT_USERS = {
+    # Demo amaçlıdır. Canlı kullanımda bu bilgileri .streamlit/secrets.toml içine taşıyın.
+    # [users]
+    # "merve bozkurt" = "sha256_hash"
+    "merve bozkurt": hashlib.sha256("1234".encode()).hexdigest(),
+    "firdevs ulutas": hashlib.sha256("4321".encode()).hexdigest(),
+    "seray karabay": hashlib.sha256("3210".encode()).hexdigest(),
+}
 
-if not st.session_state.giris_yapildi:
+
+st.set_page_config(page_title=APP_TITLE, page_icon="💰", layout="wide")
+
+
+def load_users() -> dict[str, str]:
+    """Kullanıcıları secrets.toml içinden okur; yoksa demo kullanıcıları kullanır."""
+    try:
+        users = dict(st.secrets.get("users", {}))
+        return {k.lower().strip(): v for k, v in users.items()} or DEFAULT_USERS
+    except Exception:
+        return DEFAULT_USERS
+
+
+def check_password(username: str, password: str) -> bool:
+    stored_hash = load_users().get(username.lower().strip())
+    if not stored_hash:
+        return False
+    given_hash = hashlib.sha256(password.encode()).hexdigest()
+    return hmac.compare_digest(stored_hash, given_hash)
+
+
+def require_login() -> None:
+    if st.session_state.get("logged_in"):
+        return
+
     st.title("🔐 Finans Dashboard Giriş")
+    with st.form("login_form"):
+        username = st.text_input("Kullanıcı adı")
+        password = st.text_input("Şifre", type="password")
+        submitted = st.form_submit_button("Giriş Yap", use_container_width=True)
 
-    kullanici_adi = st.text_input("Kullanıcı Adı")
-    sifre = st.text_input("Şifre", type="password")
-
-    if st.button("Giriş Yap"):
-        kb_kullanici = kullanici_adi.lower().strip()
-        if kb_kullanici in KULLANICILAR and KULLANICILAR[kb_kullanici] == sifre:
-            st.session_state.giris_yapildi = True
-            st.session_state.kullanici_adi = kb_kullanici
-            st.success("Giriş başarılı.")
+    if submitted:
+        if check_password(username, password):
+            st.session_state.logged_in = True
+            st.session_state.username = username.lower().strip()
             st.rerun()
-        else:
-            st.error("Kullanıcı adı veya şifre hatalı.")
-
+        st.error("Kullanıcı adı veya şifre hatalı.")
     st.stop()
 
-def get_base64_image(image_path):
-    if os.path.exists(image_path):
-        with open(image_path, "rb") as img_file:
-            return base64.b64encode(img_file.read()).decode()
+
+def money(value: float) -> str:
+    return f"{value:,.0f} ₺".replace(",", ".")
+
+
+def get_base64_image(path: Path) -> str:
+    if path.exists():
+        return base64.b64encode(path.read_bytes()).decode()
     return ""
 
-logo_base64 = get_base64_image("logo.png")
 
-if not os.path.exists(DOSYA):
-    pd.DataFrame(columns=["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar", "Ödeme Kırılımı", "Fatura Dönemi"]).to_csv(DOSYA, index=False)
+def clean_amount(value) -> float:
+    if pd.isna(value):
+        return 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    text = str(value).replace("TL", "").replace("₺", "").replace(" ", "")
+    if "," in text and "." in text:
+        text = text.replace(".", "").replace(",", ".")
+    elif "," in text:
+        text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
 
-df = pd.read_csv(DOSYA)
-df = df[df["Tarih"].astype(str).str.contains("2026", na=False)]
-df = df.drop_duplicates(subset=["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar"])
 
-for kolon in ["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar", "Ödeme Kırılımı", "Fatura Dönemi"]:
-    if kolon not in df.columns:
-        df[kolon] = ""
+def detect_breakdown(description: str) -> str:
+    text = str(description).lower().strip()
+    for label, keywords in PAYMENT_BREAKDOWN_RULES.items():
+        if any(keyword in text for keyword in keywords):
+            return label
+    return "Cari"
 
-df["İşlem Türü"] = df["İşlem Türü"].replace("", "Yapılan Ödeme").fillna("Yapılan Ödeme")
-df["Tutar"] = pd.to_numeric(df["Tutar"], errors="coerce").fillna(0)
-df["Tarih_dt"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
 
-aylar_map = {1:"Ocak", 2:"Şubat", 3:"Mart", 4:"Nisan", 5:"Mayıs", 6:"Haziran", 7:"Temmuz", 8:"Ağustos", 9:"Eylül", 10:"Ekim", 11:"Kasım", 12:"Aralık"}
-df.loc[df["Fatura Dönemi"] == "", "Fatura Dönemi"] = df["Tarih_dt"].dt.month.map(aylar_map)
-df["Fatura Dönemi"] = df["Fatura Dönemi"].fillna("Mayıs")
+def ensure_data_file() -> None:
+    if not DATA_FILE.exists():
+        pd.DataFrame(columns=COLUMNS).to_csv(DATA_FILE, index=False)
 
-bugun = pd.Timestamp.today().normalize()
-ay_basi = bugun.replace(day=1)
-yil_basi = bugun.replace(month=1, day=1)
 
-# --- SIDEBAR ---
-st.sidebar.header("📅 Dönem Seçimi")
-secili_baslangic = pd.Timestamp(st.sidebar.date_input("Başlangıç Tarihi", value=ay_basi.date()))
-secili_bitis = pd.Timestamp(st.sidebar.date_input("Bitiş Tarihi", value=bugun.date()))
+@st.cache_data(show_spinner=False)
+def read_data(path: str, mtime: float) -> pd.DataFrame:
+    df = pd.read_csv(path)
+    for col in COLUMNS:
+        if col not in df.columns:
+            df[col] = ""
+    df = df[COLUMNS]
+    df["Tutar"] = pd.to_numeric(df["Tutar"].apply(clean_amount), errors="coerce").fillna(0)
+    df["Tarih_dt"] = pd.to_datetime(df["Tarih"], format="%d-%m-%Y", errors="coerce")
+    df["İşlem Türü"] = df["İşlem Türü"].replace("", "Yapılan Ödeme").fillna("Yapılan Ödeme")
+    df.loc[df["Fatura Dönemi"].astype(str).str.strip() == "", "Fatura Dönemi"] = df["Tarih_dt"].dt.month.map(MONTHS)
+    df["Fatura Dönemi"] = df["Fatura Dönemi"].fillna(df["Tarih_dt"].dt.month.map(MONTHS))
+    return df.drop_duplicates(subset=["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar"])
 
-st.sidebar.header("➕ Yeni Kayıt")
-tarih = st.sidebar.date_input("Tarih")
-islem_turu = st.sidebar.selectbox("İşlem Türü", ["Yapılan Ödeme", "Kesilen Fatura", "Gelen Bedel"])
 
-secili_kirilim = ""
-odeme = ""
-fatura_donemi = ""
+def save_data(df: pd.DataFrame) -> None:
+    df.drop(columns=["Tarih_dt"], errors="ignore")[COLUMNS].to_csv(DATA_FILE, index=False)
+    read_data.clear()
 
-aylar_sirasi = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
 
-if islem_turu == "Yapılan Ödeme":
-    kirilim_secenekleri = ["vergiler", "kıdem ihbar", "icra", "maaş", "nakit çekilen", "avans", "iş avansı", "hgs", "banka masrafı", "kredi kartı ödemesi", "Diğer"]
-    secili_kirilim = st.sidebar.selectbox("Ödeme Kırılımı", kirilim_secenekleri)
-    odeme = st.sidebar.selectbox("Ödeme Tipi", ["Nakit", "Havale", "Kart"])
-    fatura_donemi = aylar_map[tarih.month]
-elif islem_turu == "Kesilen Fatura":
-    fatura_donemi = st.sidebar.selectbox("Fatura Dönemi (Ait Olduğu Ay)", aylar_sirasi, index=datetime.now().month - 1)
-    odeme = "Fatura (Bağımsız)"
-else:
-    odeme = st.sidebar.selectbox("Ödeme Tipi", ["Nakit", "Havale", "Kart"])
-    fatura_donemi = aylar_map[tarih.month]
+def parse_incoming_payments(uploaded_file) -> pd.DataFrame:
+    try:
+        raw = pd.read_excel(uploaded_file, header=None)
+    except Exception as exc:
+        st.error(f"Excel okunurken hata oluştu: {exc}")
+        return pd.DataFrame(columns=COLUMNS)
 
-aciklama = st.sidebar.text_input("Açıklama")
-tutar = st.sidebar.number_input("Tutar", min_value=0.0, step=100.0)
-
-if st.sidebar.button("Kaydet"):
-    yeni = pd.DataFrame([{
-        "Tarih": tarih.strftime("%d-%m-%Y"),
-        "Açıklama": aciklama,
-        "İşlem Türü": islem_turu,
-        "Ödeme Tipi": odeme,
-        "Tutar": tutar,
-        "Ödeme Kırılımı": secili_kirilim,
-        "Fatura Dönemi": fatura_donemi
-    }])
-    ana = df.drop(columns=["Tarih_dt"], errors="ignore")
-    ana = pd.concat([ana, yeni], ignore_index=True)
-    ana.to_csv(DOSYA, index=False)
-    st.success("Kayıt eklendi.")
-    st.rerun()
-
-# --- VERİ FİLTRELEME & HESAPLAMALAR ---
-yapilan = df[df["İşlem Türü"] == "Yapılan Ödeme"]
-gelen = df[df["İşlem Türü"] == "Gelen Bedel"]
-fatura = df[df["İşlem Türü"] == "Kesilen Fatura"]
-
-# Tarih Seçimine Göre Aylık/Dönemsel Dinamik Filtreleme
-secili_gelen = gelen[(gelen["Tarih_dt"] >= secili_baslangic) & (gelen["Tarih_dt"] <= secili_bitis)]
-secili_fatura = fatura[(fatura["Tarih_dt"] >= secili_baslangic) & (fatura["Tarih_dt"] <= secili_bitis)]
-secili_yapilan = yapilan[(yapilan["Tarih_dt"] >= secili_baslangic) & (yapilan["Tarih_dt"] <= secili_bitis)]
-
-# Yıllık Kümülatif Hesaplamalar (Takvim seçiminden tamamen bağımsız, 1 Ocak'tan bugüne sabit)
-yil_basi_gelen = gelen[(gelen["Tarih_dt"] >= yil_basi) & (gelen["Tarih_dt"] <= bugun)]
-yil_basi_fatura = fatura[(fatura["Tarih_dt"] >= yil_basi) & (fatura["Tarih_dt"] <= bugun)]
-
-ay_yapilan = yapilan[yapilan["Tarih_dt"] >= ay_basi]
-ay_gelen = gelen[gelen["Tarih_dt"] >= ay_basi]
-
-# --- TASARIM VE CSS ---
-st.markdown(f"""
-<style>
-.hero {{
-    background: linear-gradient(90deg, #374151 0%, #1f2937 50%, #111827 100%);
-    border-radius: 12px; padding: 20px 40px; border: 1px solid rgba(255,255,255,0.1);
-    box-shadow: 0 10px 30px rgba(0,0,0,0.5); margin-bottom: 25px; display: flex; align-items: center; justify-content: center; position: relative;
-}}
-.logo-box {{ background: white; border-radius: 10px; padding: 10px 20px; position: absolute; left: 40px; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }}
-.logo-box img {{ height: 38px; display: block; }}
-.hero-text-container {{ text-align: center; }}
-.hero-title {{ font-size: 50px; color: white; margin: 0; font-weight: 300; letter-spacing: 1px; }}
-.hero-subtitle {{ font-size: 18px; color: #cbd5e1; margin-top: 8px; font-weight: 300; }}
-.mini-card {{ background: #111827; border: 1px solid rgba(255,255,255,0.08); border-radius: 10px; padding: 16px; box-shadow: 0 4px 20px rgba(0,0,0,0.4); margin-bottom: 20px; }}
-.mini-title {{ color: #9ca3af; font-size: 13px; font-weight: 500; margin-bottom: 8px; }}
-.mini-value {{ color: white; font-size: 24px; font-weight: 600; margin-bottom: 6px; }}
-.green-tag {{ color: #34d399; font-size: 12px; display: flex; align-items: center; gap: 4px; }}
-.blue-tag {{ color: #60a5fa; font-size: 12px; display: flex; align-items: center; gap: 4px; }}
-.chart-card {{ background: #111827; border: 1px solid rgba(255,255,255,0.05); border-radius: 12px; padding: 15px; box-shadow: 0 8px 24px rgba(0,0,0,0.3); }}
-.chart-header {{ color: white; font-size: 14px; font-weight: 500; margin-bottom: 10px; }}
-</style>
-
-<div class="hero">
-    <div class="logo-box"><img src="data:image/png;base64,{logo_base64}"></div>
-    <div class="hero-text-container">
-        <div class="hero-title">Desecure Finans Dashboard</div>
-        <div class="hero-subtitle">Finans takip, ödemeler, gelen bedeller ve kesilen faturalar paneli</div>
-    </div>
-</div>
-""", unsafe_allow_html=True)
-
-# --- ÜST METRİK KARTLARI ---
-col_a, col_b, col_c, col_d = st.columns(4)
-with col_a:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Aylık Kesilen Fatura</div><div class="mini-value">{secili_fatura["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Alacak Hedefi</div></div>', unsafe_allow_html=True)
-with col_b:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Aylık Gelen Bedel</div><div class="mini-value">{secili_gelen["Tutar"].sum():,.0f} ₺</div><div class="blue-tag">📅 Dönem İçi Yapılan Tahsilat</div></div>', unsafe_allow_html=True)
-with col_c:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıllık Toplam Kesilen Fatura</div><div class="mini-value">{yil_basi_fatura["Tutar"].sum():,.0f} ₺</div><div class="green-tag">🧾 1 Ocak\'tan Beri Toplam Ciro</div></div>', unsafe_allow_html=True)
-with col_d:
-    st.markdown(f'<div class="mini-card"><div class="mini-title">Yıllık Toplam Gelen Bedel</div><div class="mini-value">{yil_basi_gelen["Tutar"].sum():,.0f} ₺</div><div class="green-tag">📈 Birikimli Toplam Kasa Girişi</div></div>', unsafe_allow_html=True)
-
-# --- DİNAMİK MODERN GRAFİK PANELİ ---
-st.markdown("<br>", unsafe_allow_html=True)
-g_col1, g_col2, g_col3 = st.columns([1.3, 1.3, 1.4])
-
-with g_col1:
-    st.markdown('<div class="chart-card"><div class="chart-header">Gelen Ödemeler Aylık Trend</div>', unsafe_allow_html=True)
-    fig1 = go.Figure()
-    fig1.add_trace(go.Bar(
-        x=['Oca', 'Şub', 'Mar', 'Nis', 'May'], 
-        y=[12000, 19000, 15000, 28000, ay_gelen['Tutar'].sum() if len(ay_gelen)>0 else 0],
-        marker_color='#34d399', opacity=0.85, marker_line_width=0
-    ))
-    fig1.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=10, r=10, t=10, b=10), height=180, showlegend=False,
-        xaxis=dict(showgrid=False, tickfont=dict(color='#9ca3af')),
-        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', tickfont=dict(color='#9ca3af'))
-    )
-    st.plotly_chart(fig1, use_container_width=True, config={'displayModeBar': False})
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with g_col2:
-    st.markdown('<div class="chart-card"><div class="chart-header">Gider Dağılımı (Seçili Dönem)</div>', unsafe_allow_html=True)
-    target_gider = secili_yapilan if len(secili_yapilan) > 0 else ay_yapilan
-    if len(target_gider) > 0 and "Ödeme Kırılımı" in target_gider.columns:
-        target_gider["Ödeme Kırılımı"] = target_gider["Ödeme Kırılımı"].fillna("Diğer").replace("", "Diğer")
-        grup_df = target_gider.groupby("Ödeme Kırılımı")["Tutar"].sum().reset_index()
-        labels = grup_df["Ödeme Kırılımı"].tolist()
-        values = grup_df["Tutar"].tolist()
-    else:
-        labels = ["Henüz Veri Yok"]
-        values = [1]
-
-    fig2 = go.Figure(data=[go.Pie(labels=labels, values=values, hole=.6, marker=dict(colors=['#34d399', '#22d3ee', '#a855f7', '#f43f5e', '#fbbf24']))])
-    fig2.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=10, r=10, t=10, b=10), height=180,
-        legend=dict(font=dict(color='#9ca3af', size=10), orientation="v", yanchor="middle", y=0.5, xanchor="left", x=1.05)
-    )
-    fig2.update_traces(textinfo='none')
-    st.plotly_chart(fig2, use_container_width=True, config={'displayModeBar': False})
-    st.markdown('</div>', unsafe_allow_html=True)
-
-with g_col3:
-    st.markdown('<div class="chart-card"><div class="chart-header">Fatura / Tahsilat Dönemsel Kıyas Analizi</div>', unsafe_allow_html=True)
-    
-    f_grup = df[df["İşlem Türü"] == "Kesilen Fatura"].groupby("Fatura Dönemi")["Tutar"].sum().reindex(aylar_sirasi, fill_value=0)
-    t_grup = df[df["İşlem Türü"] == "Gelen Bedel"].groupby("Fatura Dönemi")["Tutar"].sum().reindex(aylar_sirasi, fill_value=0)
-    
-    aktif_aylar = [ay for ay in aylar_sirasi if f_grup[ay] > 0 or t_grup[ay] > 0]
-    if not aktif_aylar:
-        aktif_aylar = ["Mayıs"]
-        
-    f_dizi = [f_grup[ay] for ay in aktif_aylar]
-    t_dizi = [t_grup[ay] for ay in aktif_aylar]
-
-    fig3 = go.Figure()
-    fig3.add_trace(go.Bar(x=aktif_aylar, y=f_dizi, name='Kesilen Fatura', marker_color='#60a5fa', opacity=0.85))
-    fig3.add_trace(go.Bar(x=aktif_aylar, y=t_dizi, name='Tahsilat (Gelen)', marker_color='#34d399', opacity=0.85))
-    
-    fig3.update_layout(
-        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-        margin=dict(l=10, r=10, t=10, b=10), height=180, barmode='group',
-        legend=dict(font=dict(color='#9ca3af', size=9), orientation="h", y=1.2, x=0),
-        xaxis=dict(showgrid=False, tickfont=dict(color='#9ca3af')),
-        yaxis=dict(showgrid=True, gridcolor='rgba(255,255,255,0.05)', tickfont=dict(color='#9ca3af'))
-    )
-    st.plotly_chart(fig3, use_container_width=True, config={'displayModeBar': False})
-    st.markdown('</div>', unsafe_allow_html=True)
-
-# --- FATURA / TAHSİLAT KIYAS TABLOSU ---
-st.divider()
-st.subheader("📊 Fatura ve Tahsilat Performans Raporu (Aylık)")
-
-kiyas_data = []
-for ay in aylar_sirasi:
-    f_tutar = f_grup[ay]
-    t_tutar = t_grup[ay]
-    fark = f_tutar - t_tutar
-    oran = (t_tutar / f_tutar * 100) if f_tutar > 0 else (100.0 if t_tutar > 0 else 0.0)
-    
-    if f_tutar > 0 or t_tutar > 0:
-        kiyas_data.append({
-            "Dönem / Ay": ay,
-            "Kesilen Fatura Toplamı": f"{f_tutar:,.2f} ₺",
-            "Yapılan Tahsilat Toplamı": f"{t_tutar:,.2f} ₺",
-            "Kalan Alacak / Fark": f"{fark:,.2f} ₺",
-            "Tahsilat Oranı": f"% {oran:.1f}"
-        })
-
-if kiyas_data:
-    kiyas_df = pd.DataFrame(kiyas_data)
-    st.dataframe(kiyas_df, use_container_width=True)
-else:
-    st.info("Kıyaslama tablosu için henüz girilmiş Fatura veya Gelen Bedel kaydı bulunmuyor.")
-
-# --- DETAYLI VERİ SEKMELERİ VE METRİKLER ---
-st.divider()
-st.subheader("💰 Özel Gelen Bedel Takibi")
-
-gelen_df = df[df["İşlem Türü"] == "Gelen Bedel"]
-doviz_df = gelen_df[gelen_df["Açıklama"].str.contains("FX|DVZ|Bozum", case=False, na=False)]
-cenk_df = gelen_df[gelen_df["Açıklama"].str.contains("Cenk Çavuşoğlu", case=False, na=False)]
-
-st.markdown("### 💱 Döviz Bozumu")
-col_d1, col_d2, col_d3 = st.columns(3)
-col_d1.metric("Bugün Döviz", f"{doviz_df[doviz_df['Tarih_dt'] == bugun]['Tutar'].sum():,.0f} TL")
-col_d2.metric("Ay Döviz", f"{doviz_df[(doviz_df['Tarih_dt'] >= ay_basi) & (doviz_df['Tarih_dt'] <= bugun)]['Tutar'].sum():,.0f} TL")
-col_d3.metric("Yıl Döviz", f"{doviz_df[(doviz_df['Tarih_dt'] >= yil_basi) & (doviz_df['Tarih_dt'] <= bugun)]['Tutar'].sum():,.0f} TL")
-
-st.markdown("### 👤 Cenk Çavuşoğlu")
-col_c1, col_c2, col_c3 = st.columns(3)
-col_c1.metric("Bugün Cenk", f"{cenk_df[cenk_df['Tarih_dt'] == bugun]['Tutar'].sum():,.0f} TL")
-col_c2.metric("Ay Cenk", f"{cenk_df[(cenk_df['Tarih_dt'] >= ay_basi) & (cenk_df['Tarih_dt'] <= bugun)]['Tutar'].sum():,.0f} TL")
-col_c3.metric("Yıl Cenk", f"{cenk_df[(cenk_df['Tarih_dt'] >= yil_basi) & (cenk_df['Tarih_dt'] <= bugun)]['Tutar'].sum():,.0f} TL")
-
-st.divider()
-
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
-    "📊 Tüm Kayıtlar", "💸 Yapılan Ödemeler", "💰 Gelen Bedeller", 
-    "📆 Seçili Dönem Gelen", "🧾 Seçili Ay Kesilen Faturalar", "📤 Dosya Yükle"
-])
-
-with tab1:
-    duzenlenen = st.data_editor(df.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400, num_rows="dynamic")
-    if st.button("💾 Değişiklikleri Kaydet"):
-        duzenlenen.to_csv(DOSYA, index=False)
-        st.success("Değişiklikler kaydedildi.")
-        st.rerun()
-
-with tab2:
-    st.dataframe(yapilan.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400)
-with tab3:
-    st.dataframe(gelen.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400)
-with tab4:
-    st.dataframe(secili_gelen.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400)
-with tab5:
-    st.dataframe(secili_fatura.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=400)
-
-def tutar_temizle(deger):
-    if pd.isna(deger): return 0
-    if isinstance(deger, (int, float)): return float(deger)
-    deger = str(deger).replace("TL", "").replace("₺", "").replace(" ", "")
-    if "," in deger and "." in deger: deger = deger.replace(".", "").replace(",", ".")
-    elif "," in deger: deger = deger.replace(",", ".")
-    try: return float(deger)
-    except: return 0
-
-def gelen_bedelleri_donustur(uploaded_file):
-    ham = pd.read_excel(uploaded_file, header=None)
-    kayitlar = []
-    aktif_tarih = None
-    for _, satir in ham.iterrows():
-        ilk_hucre = satir.iloc[0]
-        tutar = satir.iloc[1] if len(satir) > 1 else None
-        if pd.isna(ilk_hucre): continue
-        text = str(ilk_hucre).strip()
-        tarih = pd.to_datetime(text.split("-")[0].strip(), format="%d.%m.%Y", errors="coerce")
-        if not pd.isna(tarih):
-            aktif_tarih = tarih.strftime("%d-%m-%Y")
+    records, active_date = [], None
+    for _, row in raw.iterrows():
+        first_cell = row.iloc[0]
+        amount_raw = row.iloc[1] if len(row) > 1 else None
+        if pd.isna(first_cell):
             continue
-        if text.upper() == "TOPLAM": continue
-        if aktif_tarih and not pd.isna(tutar):
-            kayitlar.append({
-                "Tarih": aktif_tarih, "Açıklama": text, "İşlem Türü": "Gelen Bedel",
-                "Ödeme Tipi": "Havale", "Tutar": tutar_temizle(tutar), "Ödeme Kırılımı": "", "Fatura Dönemi": aylar_map[pd.to_datetime(aktif_tarih, format="%d-%m-%Y").month]
-            })
-    return pd.DataFrame(kayitlar)
 
-with tab6:
-    st.subheader("📤 Excel / CSV Dosyası Yükle")
-    uploaded_file = st.file_uploader("Dosya yükle", type=["xlsx", "csv"])
-    if uploaded_file is not None:
-        if uploaded_file.name.endswith(".csv"):
-            yuklenen_df = pd.read_csv(uploaded_file)
+        text = str(first_cell).strip()
+        parsed_date = pd.to_datetime(text.split("-")[0].strip(), format="%d.%m.%Y", errors="coerce")
+
+        if not pd.isna(parsed_date):
+            active_date = parsed_date
+            continue
+        if text.upper() == "TOPLAM":
+            continue
+        if active_date is not None and not pd.isna(amount_raw):
+            records.append({
+                "Tarih": active_date.strftime("%d-%m-%Y"),
+                "Açıklama": text,
+                "İşlem Türü": "Gelen Bedel",
+                "Ödeme Tipi": "Havale",
+                "Tutar": clean_amount(amount_raw),
+                "Ödeme Kırılımı": "",
+                "Fatura Dönemi": MONTHS[active_date.month],
+            })
+    return pd.DataFrame(records, columns=COLUMNS)
+
+
+def parse_outgoing_payments(uploaded_file) -> pd.DataFrame:
+    try:
+        raw = pd.read_excel(uploaded_file)
+    except Exception as exc:
+        st.error(f"Excel dosyası okunurken hata oluştu: {exc}")
+        return pd.DataFrame(columns=COLUMNS)
+
+    amount_col = next((c for c in raw.columns if "tutar" in str(c).lower()), raw.columns[2] if len(raw.columns) >= 3 else None)
+    description_col = raw.columns[3] if len(raw.columns) >= 4 else raw.columns[0]
+    today = pd.Timestamp.today()
+
+    records = []
+    for _, row in raw.iterrows():
+        description = str(row.get(description_col, "")).strip()
+        if not description or description.lower() in {"aciklama", "açıklama", "toplam", "general total"}:
+            continue
+
+        amount = clean_amount(row.get(amount_col, 0))
+        if amount <= 0:
+            continue
+
+        records.append({
+            "Tarih": today.strftime("%d-%m-%Y"),
+            "Açıklama": description,
+            "İşlem Türü": "Yapılan Ödeme",
+            "Ödeme Tipi": "Havale",
+            "Tutar": amount,
+            "Ödeme Kırılımı": detect_breakdown(description),
+            "Fatura Dönemi": MONTHS[today.month],
+        })
+    return pd.DataFrame(records, columns=COLUMNS)
+
+
+def render_css() -> None:
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif !important; }
+    .stApp { background: radial-gradient(circle at top left, #172554 0%, #020617 44%, #020617 100%); }
+    .hero { background: linear-gradient(135deg, rgba(59,130,246,.16), rgba(15,23,42,.82), rgba(168,85,247,.16));
+            border: 1px solid rgba(255,255,255,.10); border-radius: 28px; padding: 34px 42px; margin-bottom: 26px;
+            box-shadow: 0 24px 80px rgba(0,0,0,.38); }
+    .hero h1 { color: #f8fafc; font-size: 42px; margin: 0; font-weight: 800; letter-spacing: -.04em; }
+    .hero p { color: #cbd5e1; margin: 8px 0 0; }
+    .metric-card { background: rgba(15,23,42,.72); border: 1px solid rgba(255,255,255,.08); border-radius: 22px;
+                   padding: 20px 22px; box-shadow: 0 16px 48px rgba(0,0,0,.28); }
+    .metric-title { color:#94a3b8; font-size:12px; text-transform:uppercase; font-weight:700; letter-spacing:.08em; }
+    .metric-value { color:#f8fafc; font-size:28px; font-weight:800; margin-top:8px; }
+    .soft-card { background: rgba(15,23,42,.62); border: 1px solid rgba(255,255,255,.08); border-radius: 22px; padding: 18px; }
+    h1, h2, h3 { color:#e2e8f0 !important; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def metric_card(title: str, value: float, note: str) -> None:
+    st.markdown(
+        f"""<div class="metric-card">
+            <div class="metric-title">{title}</div>
+            <div class="metric-value">{money(value)}</div>
+            <div style="color:#93c5fd;font-size:12px;margin-top:6px">{note}</div>
+        </div>""",
+        unsafe_allow_html=True,
+    )
+
+
+def add_record_form(df: pd.DataFrame) -> None:
+    st.sidebar.header("➕ Yeni Kayıt")
+    with st.sidebar.form("new_record", clear_on_submit=True):
+        date = st.date_input("Tarih")
+        transaction_type = st.selectbox("İşlem Türü", ["Yapılan Ödeme", "Kesilen Fatura", "Gelen Bedel"])
+        description = st.text_input("Açıklama")
+        amount = st.number_input("Tutar", min_value=0.0, step=100.0)
+
+        if transaction_type == "Yapılan Ödeme":
+            payment_type = st.selectbox("Ödeme Tipi", ["Nakit", "Havale", "Kart"])
+            breakdown = detect_breakdown(description)
+            invoice_period = MONTHS[date.month]
+        elif transaction_type == "Kesilen Fatura":
+            payment_type = "Fatura (Bağımsız)"
+            breakdown = ""
+            invoice_period = st.selectbox("Fatura Dönemi", MONTH_ORDER, index=date.month - 1)
         else:
-            yuklenen_df = gelen_bedelleri_donustur(uploaded_file)
-        st.success("Dosya başarıyla dönüştürüldü.")
-        st.write(f"Toplam dönüştürülen kayıt: {len(yuklenen_df)}")
-        st.dataframe(yuklenen_df.head(20), use_container_width=True)
-        if st.button("Yüklenen Dosyayı Ana Veriye Aktar"):
-            mevcut = df.drop(columns=["Tarih_dt"], errors="ignore")
-            yeni_df = pd.concat([mevcut, yuklenen_df], ignore_index=True)
-            yeni_df.to_csv(DOSYA, index=False)
-            st.success("Gelen bedeller ana veriye aktarıldı.")
+            payment_type = st.selectbox("Ödeme Tipi", ["Nakit", "Havale", "Kart"])
+            breakdown = ""
+            invoice_period = MONTHS[date.month]
+
+        if st.form_submit_button("Kaydet", use_container_width=True):
+            if not description.strip() or amount <= 0:
+                st.warning("Açıklama ve tutar zorunludur.")
+                return
+
+            new_row = pd.DataFrame([{
+                "Tarih": date.strftime("%d-%m-%Y"),
+                "Açıklama": description.strip(),
+                "İşlem Türü": transaction_type,
+                "Ödeme Tipi": payment_type,
+                "Tutar": amount,
+                "Ödeme Kırılımı": breakdown,
+                "Fatura Dönemi": invoice_period,
+            }])
+            save_data(pd.concat([df.drop(columns=["Tarih_dt"], errors="ignore"), new_row], ignore_index=True))
+            st.success("Kayıt eklendi.")
             st.rerun()
 
-st.divider()
-excel_dosya = "finans_raporu.xlsx"
-df.drop(columns=["Tarih_dt"], errors="ignore").to_excel(excel_dosya, index=False)
 
-with open(excel_dosya, "rb") as file:
-    st.download_button(
-        label="📥 Excel Raporu İndir",
-        data=file,
-        file_name=excel_dosya,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+def make_bar(x, y, name=None):
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=x, y=y, name=name))
+    fig.update_layout(
+        paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=240,
+        margin=dict(l=12, r=12, t=18, b=12),
+        font=dict(color="#cbd5e1"), xaxis=dict(showgrid=False),
+        yaxis=dict(gridcolor="rgba(255,255,255,.08)")
     )
+    return fig
+
+
+def main() -> None:
+    require_login()
+    ensure_data_file()
+
+    df = read_data(str(DATA_FILE), DATA_FILE.stat().st_mtime)
+    today = pd.Timestamp.today().normalize()
+    month_start = today.replace(day=1)
+    year_start = today.replace(month=1, day=1)
+
+    render_css()
+    logo = get_base64_image(LOGO_FILE)
+    logo_html = f'<img src="data:image/png;base64,{logo}" style="height:42px;margin-bottom:10px">' if logo else ""
+    st.markdown(f"""<div class="hero">{logo_html}<h1>{APP_TITLE}</h1>
+                    <p>Modern finans takip · tahsilat performansı · ödeme kırılımı · Excel aktarımı</p></div>""",
+                unsafe_allow_html=True)
+
+    st.sidebar.header("📅 Dönem Seçimi")
+    start_date = pd.Timestamp(st.sidebar.date_input("Başlangıç Tarihi", value=month_start.date()))
+    end_date = pd.Timestamp(st.sidebar.date_input("Bitiş Tarihi", value=today.date()))
+    add_record_form(df)
+
+    outgoing = df[df["İşlem Türü"] == "Yapılan Ödeme"].copy()
+    incoming_all = df[df["İşlem Türü"] == "Gelen Bedel"].copy()
+    invoices = df[df["İşlem Türü"] == "Kesilen Fatura"].copy()
+    outgoing["Ödeme Analiz Kırılımı"] = outgoing["Açıklama"].apply(detect_breakdown)
+
+    special_pattern = r"Cenk Çavuşoğlu|FX|DVZ|Bozum"
+    special_mask = incoming_all["Açıklama"].astype(str).str.contains(special_pattern, case=False, na=False)
+    incoming = incoming_all[~special_mask].copy()
+    incoming_special = incoming_all[special_mask].copy()
+
+    selected_incoming = incoming[(incoming["Tarih_dt"] >= start_date) & (incoming["Tarih_dt"] <= end_date)]
+    selected_invoices = invoices[(invoices["Tarih_dt"] >= start_date) & (invoices["Tarih_dt"] <= end_date)]
+    selected_outgoing = outgoing[(outgoing["Tarih_dt"] >= start_date) & (outgoing["Tarih_dt"] <= end_date)]
+
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: metric_card("Dönem Kesilen Fatura", selected_invoices["Tutar"].sum(), "Alacak hedefi")
+    with c2: metric_card("Dönem Gelen Bedel", selected_incoming["Tutar"].sum(), "Özel kayıtlar hariç")
+    with c3: metric_card("Dönem Yapılan Ödeme", selected_outgoing["Tutar"].sum(), "Seçili dönem gideri")
+    with c4: metric_card("Yıllık Gelen Bedel", incoming[(incoming["Tarih_dt"] >= year_start) & (incoming["Tarih_dt"] <= today)]["Tutar"].sum(), "Birikimli tahsilat")
+
+    g1, g2 = st.columns(2)
+    with g1:
+        st.subheader("📈 Aylık Tahsilat")
+        monthly_incoming = incoming.groupby("Fatura Dönemi")["Tutar"].sum().reindex(MONTH_ORDER, fill_value=0)
+        active_months = [m for m in MONTH_ORDER if monthly_incoming[m] > 0] or [MONTHS[today.month]]
+        st.plotly_chart(make_bar(active_months, [monthly_incoming[m] for m in active_months]), use_container_width=True)
+    with g2:
+        st.subheader("💸 Ödeme Kırılımı")
+        breakdown = selected_outgoing.groupby("Ödeme Analiz Kırılımı")["Tutar"].sum().sort_values(ascending=False)
+        if breakdown.empty:
+            st.info("Seçili dönem için ödeme kaydı yok.")
+        else:
+            fig = go.Figure(data=[go.Pie(labels=breakdown.index, values=breakdown.values, hole=.58)])
+            fig.update_layout(paper_bgcolor="rgba(0,0,0,0)", plot_bgcolor="rgba(0,0,0,0)", height=240, font=dict(color="#cbd5e1"))
+            st.plotly_chart(fig, use_container_width=True)
+
+    st.divider()
+    st.subheader("📊 Fatura / Tahsilat Performansı")
+    invoice_group = invoices.groupby("Fatura Dönemi")["Tutar"].sum().reindex(MONTH_ORDER, fill_value=0)
+    incoming_group = incoming.groupby("Fatura Dönemi")["Tutar"].sum().reindex(MONTH_ORDER, fill_value=0)
+    comparison = []
+    for month in MONTH_ORDER:
+        invoice_total, incoming_total = invoice_group[month], incoming_group[month]
+        if invoice_total > 0 or incoming_total > 0:
+            rate = incoming_total / invoice_total * 100 if invoice_total else 100
+            comparison.append({
+                "Dönem": month,
+                "Kesilen Fatura": money(invoice_total),
+                "Tahsilat": money(incoming_total),
+                "Kalan / Fark": money(invoice_total - incoming_total),
+                "Tahsilat Oranı": f"% {rate:.1f}",
+            })
+    st.dataframe(pd.DataFrame(comparison), use_container_width=True, hide_index=True)
+
+    tabs = st.tabs(["📊 Tüm Kayıtlar", "💸 Ödemeler", "💰 Gelen Bedeller", "🧾 Faturalar", "📤 Dosya Yükle"])
+    with tabs[0]:
+        edited = st.data_editor(df.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=420, num_rows="dynamic", hide_index=True)
+        if st.button("💾 Tablo Değişikliklerini Kaydet", type="primary"):
+            save_data(edited)
+            st.success("Değişiklikler kaydedildi.")
+            st.rerun()
+    with tabs[1]:
+        st.dataframe(outgoing.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=420, hide_index=True)
+    with tabs[2]:
+        st.caption("Cenk Çavuşoğlu ve FX/DVZ/Bozum kayıtları ana tahsilat toplamına dahil edilmez.")
+        st.dataframe(incoming.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=420, hide_index=True)
+    with tabs[3]:
+        st.dataframe(invoices.drop(columns=["Tarih_dt"], errors="ignore"), use_container_width=True, height=420, hide_index=True)
+    with tabs[4]:
+        upload_type = st.selectbox("Yüklenecek dosya türü", ["Yapılan Ödemeler", "Gelen Bedeller", "CSV Hazır Veri"])
+        uploaded = st.file_uploader("Dosya yükle", type=["xlsx", "csv"])
+        if uploaded:
+            if upload_type == "CSV Hazır Veri":
+                uploaded_df = pd.read_csv(uploaded)
+            elif upload_type == "Yapılan Ödemeler":
+                uploaded_df = parse_outgoing_payments(uploaded)
+            else:
+                uploaded_df = parse_incoming_payments(uploaded)
+
+            st.success(f"{len(uploaded_df)} kayıt dönüştürüldü.")
+            st.dataframe(uploaded_df.head(100), use_container_width=True, hide_index=True)
+            if st.button("Yüklenen Dosyayı Ana Veriye Aktar"):
+                save_data(pd.concat([df.drop(columns=["Tarih_dt"], errors="ignore"), uploaded_df], ignore_index=True))
+                st.success("Veriler ana dosyaya aktarıldı.")
+                st.rerun()
+
+    st.divider()
+    export_file = "finans_raporu.xlsx"
+    df.drop(columns=["Tarih_dt"], errors="ignore").to_excel(export_file, index=False)
+    with open(export_file, "rb") as file:
+        st.download_button("📥 Excel Raporu İndir", file, file_name=export_file, mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
+if __name__ == "__main__":
+    main()
+st.markdown("""
+<style>
+.tech-bg {
+    background: linear-gradient(135deg, #071827, #0b1120);
+    padding: 28px;
+    border-radius: 22px;
+    border: 1px solid rgba(0, 255, 255, 0.15);
+    box-shadow: 0 0 35px rgba(0, 255, 255, 0.08);
+}
+
+.tech-card {
+    background: rgba(15, 23, 42, 0.92);
+    border: 1px solid rgba(56, 189, 248, 0.20);
+    border-radius: 18px;
+    padding: 22px;
+    box-shadow: 0 0 25px rgba(236, 72, 153, 0.12);
+}
+
+.tech-title {
+    color: #93c5fd;
+    font-size: 14px;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+}
+
+.tech-value {
+    color: #f8fafc;
+    font-size: 34px;
+    font-weight: 700;
+}
+
+.tech-sub {
+    color: #22d3ee;
+    font-size: 13px;
+}
+</style>
+""", unsafe_allow_html=True)
+
+st.markdown('<div class="tech-bg">', unsafe_allow_html=True)
+
+st.markdown("## 🛰️ DESecure Finansal Kontrol Paneli")
+st.caption("Teknik finans izleme ekranı | Gelen bedeller, yapılan ödemeler, nakit akışı ve fatura analizi")
+
+k1, k2, k3 = st.columns(3)
+
+with k1:
+    st.markdown(f"""
+    <div class="tech-card">
+        <div class="tech-title">Gelen Bedeller</div>
+        <div class="tech-value">{ay_gelen['Tutar'].sum():,.0f} TL</div>
+        <div class="tech-sub">Seçili / aylık dönem</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with k2:
+    st.markdown(f"""
+    <div class="tech-card">
+        <div class="tech-title">Yapılan Ödemeler</div>
+        <div class="tech-value">{ay_yapilan['Tutar'].sum():,.0f} TL</div>
+        <div class="tech-sub">Operasyonel çıkışlar</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+with k3:
+    st.markdown(f"""
+    <div class="tech-card">
+        <div class="tech-title">Net Nakit Etkisi</div>
+        <div class="tech-value">{(ay_gelen['Tutar'].sum() - ay_yapilan['Tutar'].sum()):,.0f} TL</div>
+        <div class="tech-sub">Gelen - yapılan ödeme</div>
+    </div>
+    """, unsafe_allow_html=True)
+
+st.write("")
+
+c1, c2 = st.columns([1.2, 1])
+
+with c1:
+    chart_df = df.dropna(subset=["Tarih_dt"]).copy()
+    chart_df = chart_df.groupby(["Tarih_dt", "İşlem Türü"])["Tutar"].sum().reset_index()
+
+    fig = go.Figure()
+
+    for tur in chart_df["İşlem Türü"].unique():
+        temp = chart_df[chart_df["İşlem Türü"] == tur]
+        fig.add_trace(go.Scatter(
+            x=temp["Tarih_dt"],
+            y=temp["Tutar"],
+            mode="lines+markers",
+            name=tur,
+            line=dict(width=3),
+            fill="tozeroy"
+        ))
+
+    fig.update_layout(
+        title="Nakit Akışı",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,0.65)",
+        font=dict(color="#e5e7eb"),
+        height=360,
+        margin=dict(l=20, r=20, t=50, b=20),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+    )
+
+    st.plotly_chart(fig, use_container_width=True)
+
+with c2:
+    dagilim = df.groupby("İşlem Türü")["Tutar"].sum().reset_index()
+
+    fig2 = go.Figure(data=[go.Pie(
+        labels=dagilim["İşlem Türü"],
+        values=dagilim["Tutar"],
+        hole=0.55
+    )])
+
+    fig2.update_layout(
+        title="İşlem Dağılımı",
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(15,23,42,0.65)",
+        font=dict(color="#e5e7eb"),
+        height=360,
+        margin=dict(l=20, r=20, t=50, b=20),
+        legend=dict(font=dict(color="#e5e7eb"))
+    )
+
+    st.plotly_chart(fig2, use_container_width=True)
+
+st.markdown('</div>', unsafe_allow_html=True)
