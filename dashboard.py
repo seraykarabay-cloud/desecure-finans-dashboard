@@ -389,6 +389,26 @@ def main() -> None:
 
     render_css()
     logo = get_base64_image(LOGO_FILE)
+    
+    # LOGO BOYUTU VE GÖRSEL DEĞİŞİKLİĞİ ALANI
+    # height değerini 48px'den 120px'e çıkardık ve geniş ekran düzenine uyum sağlaması için border-radius ekledik
+    logo_html = f"""
+    <div style="text-align: left; margin-bottom: 20px;">
+        <img src="data:image/png;base64,{logo}" style="height: 120px; width: auto; object-fit: contain; border-radius: 8px;">
+    </div>
+    """ if logo else ""
+    
+    st.markdown(f"""
+    <div class="hero">
+        {logo_html}
+        <h1>🛰️ {APP_TITLE}</h1>
+        <p style="margin-bottom:0; color:#94a3b8; font-size:14px; font-weight: 500; margin-top:8px;">
+            Teknik finans izleme ekranı | Gelen bedeller, yapılan ödemeler, nakit akışı ve fatura analizi
+        </p>
+    </div>""", unsafe_allow_html=True)
+
+    render_css()
+    logo = get_base64_image(LOGO_FILE)
     logo_html = f'<img src="data:image/png;base64,{logo}" style="height:48px; margin-bottom:12px;">' if logo else ""
     
     st.markdown(f"""
