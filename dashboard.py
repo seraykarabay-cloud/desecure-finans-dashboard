@@ -1,6 +1,7 @@
 import base64
 import hashlib
 import hmac
+import os
 from datetime import datetime
 from pathlib import Path
 
@@ -8,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
 
-APP_TITLE = "DESecure Finansal Kontrol Paneli"
+APP_TITLE = "Desecure Finans Dashboard"
 DATA_FILE = Path("veriler.csv")
 LOGO_FILE = Path("logo.png")
 COLUMNS = ["Tarih", "Açıklama", "İşlem Türü", "Ödeme Tipi", "Tutar", "Ödeme Kırılımı", "Fatura Dönemi"]
@@ -41,7 +42,7 @@ DEFAULT_USERS = {
     "seray karabay": hashlib.sha256("3210".encode()).hexdigest(),
 }
 
-st.set_page_config(page_title=APP_TITLE, page_icon="🛰️", layout="wide")
+st.set_page_config(page_title=APP_TITLE, page_icon="💰", layout="wide")
 
 def load_users() -> dict[str, str]:
     try:
@@ -205,6 +206,7 @@ def parse_outgoing_payments(uploaded_file) -> pd.DataFrame:
         })
     return pd.DataFrame(records, columns=COLUMNS)
 
+
 def render_css() -> None:
     st.markdown("""
     <style>
@@ -226,6 +228,7 @@ def render_css() -> None:
         border-right: 1px solid rgba(255, 255, 255, 0.05) !important;
     }
 
+    /* Üst Kahraman (Hero) Kart Alanı */
     .hero {
         background: linear-gradient(135deg, rgba(17, 24, 39, 0.85), rgba(31, 41, 55, 0.65));
         border: 1px solid rgba(34, 211, 238, 0.25);
@@ -244,6 +247,7 @@ def render_css() -> None:
         letter-spacing: -0.02em;
     }
 
+    /* Yeni Nesil Cam Efektli Kartlar */
     .metric-card {
         background: linear-gradient(145deg, rgba(17, 24, 39, 0.9), rgba(15, 23, 42, 0.6));
         border: 1px solid rgba(255, 255, 255, 0.06);
@@ -285,6 +289,7 @@ def render_css() -> None:
         letter-spacing: -0.01em;
     }
 
+    /* Tab Tasarımlarının Özelleştirilmesi */
     .stTabs [data-baseweb="tab"] {
         color: #94a3b8 !important;
         font-weight: 600 !important;
@@ -389,34 +394,14 @@ def main() -> None:
 
     render_css()
     logo = get_base64_image(LOGO_FILE)
-    
-    # LOGO BOYUTU VE GÖRSEL DEĞİŞİKLİĞİ ALANI
-    # height değerini 48px'den 120px'e çıkardık ve geniş ekran düzenine uyum sağlaması için border-radius ekledik
-    logo_html = f"""
-    <div style="text-align: left; margin-bottom: 20px;">
-        <img src="data:image/png;base64,{logo}" style="height: 120px; width: auto; object-fit: contain; border-radius: 8px;">
-    </div>
-    """ if logo else ""
-    
-    st.markdown(f"""
-    <div class="hero">
-        {logo_html}
-        <h1>🛰️ {APP_TITLE}</h1>
-        <p style="margin-bottom:0; color:#94a3b8; font-size:14px; font-weight: 500; margin-top:8px;">
-            Teknik finans izleme ekranı | Gelen bedeller, yapılan ödemeler, nakit akışı ve fatura analizi
-        </p>
-    </div>""", unsafe_allow_html=True)
-
-    render_css()
-    logo = get_base64_image(LOGO_FILE)
     logo_html = f'<img src="data:image/png;base64,{logo}" style="height:48px; margin-bottom:12px;">' if logo else ""
     
     st.markdown(f"""
     <div class="hero">
         {logo_html}
-        <h1>🛰️ {APP_TITLE}</h1>
-        <p style="margin-bottom:0; color:#94a3b8; font-size:14px; font-weight: 500; margin-top:8px;">
-            Teknik finans izleme ekranı | Gelen bedeller, yapılan ödemeler, nakit akışı ve fatura analizi
+        <h1>{APP_TITLE}</h1>
+        <p style="margin-bottom:0; color:#94a3b8; font-size:14px; font-weight: 500;">
+            🚀 Modern Finans Takip Paneli &nbsp;|&nbsp; 📊 Gerçek Zamanlı Tahsilat Analizi &nbsp;|&nbsp; 📑 Excel Entegrasyonu
         </p>
     </div>""", unsafe_allow_html=True)
 
@@ -438,17 +423,12 @@ def main() -> None:
     selected_invoices = invoices[(invoices["Tarih_dt"] >= start_date) & (invoices["Tarih_dt"] <= end_date)]
     selected_outgoing = outgoing[(outgoing["Tarih_dt"] >= start_date) & (outgoing["Tarih_dt"] <= end_date)]
 
-    # Güvenli Dinamik Metrik Kartları Yapısı
+    # Metrik Kartları Yerleşimi
     c1, c2, c3, c4 = st.columns(4)
-    with c1: 
-        metric_card("Seçili Dönem Fatura", selected_invoices["Tutar"].sum(), "Toplam alacak hedefi")
-    with c2: 
-        metric_card("Seçili Dönem Tahsilat", selected_incoming["Tutar"].sum(), "Özel kayıtlar filtrelenmiştir")
-    with c3: 
-        metric_card("Seçili Dönem Gider", selected_outgoing["Tutar"].sum(), "Yapılan kurum dışı ödemeler")
-    with c4: 
-        yillik_tahsilat = incoming[(incoming["Tarih_dt"] >= year_start) & (incoming["Tarih_dt"] <= today)]["Tutar"].sum()
-        metric_card("Yıllık Akümüle Tahsilat", yillik_tahsilat, "1 Ocak'tan itibaren net giriş")
+    with c1: metric_card("Seçili Dönem Fatura", selected_invoices["Tutar"].sum(), "Toplam alacak hedefi")
+    with c2: metric_card("Seçili Dönem Tahsilat", selected_incoming["Tutar"].sum(), "Özel kayıtlar filtrelenmiştir")
+    with c3: metric_card("Seçili Dönem Gider", selected_outgoing["Tutar"].sum(), "Yapılan kurum dışı ödemeler")
+    with c4: metric_card("Yıllık Akümüle Tahsilat", incoming[(incoming["Tarih_dt"] >= year_start) & (incoming["Tarih_dt"] <= today)]["Tutar"].sum(), f"1 Ocak'tan itibaren net giriş")
 
     st.markdown('<div style="height: 25px;"></div>', unsafe_allow_html=True)
 
@@ -544,6 +524,7 @@ def main() -> None:
                 st.success("Tüm yeni kayıtlar ana dosyaya eklenmiştir.")
                 st.rerun()
 
+    # Alt Bilgi ve İndirme Alanı
     st.markdown('<div style="height: 10px;"></div>', unsafe_allow_html=True)
     st.divider()
     
